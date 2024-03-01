@@ -1,0 +1,30 @@
+location: eastus2
+name: flask-cont-app
+properties:
+  configuration:
+    activeRevisionsMode: Single
+    ingress:
+      additionalPortMappings:
+      - exposedPort: 21025
+        external: false
+        targetPort: 1025
+      allowInsecure: false
+      external: true
+      targetPort: 1080
+      traffic:
+      - latestRevision: true
+        weight: 100
+      transport: http
+  managedEnvironmentId: <env id>
+  template:
+    containers:
+    - image: maildev/maildev
+      name: maildev
+      resources:
+        cpu: 0.25
+        memory: 0.5Gi
+    scale:
+      maxReplicas: 1
+      minReplicas: 1
+  workloadProfileName: Consumption
+type: Microsoft.App/containerApps

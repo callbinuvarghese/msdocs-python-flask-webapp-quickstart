@@ -1,3 +1,9 @@
 Flask==2.2.2
 gunicorn
 Werkzeug==2.2.2
+
+# Azure tracing with App Insights
+azure-core-tracing-opencensus==1.0.0b9
+opencensus-ext-flask==0.8.2
+opencensus-ext-requests==0.8.0
+opencensus-ext-logging==0.1.1

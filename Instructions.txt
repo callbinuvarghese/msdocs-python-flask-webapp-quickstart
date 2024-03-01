@@ -1,0 +1,284 @@
+#https://github.com/MicrosoftDocs/azure-dev-docs/blob/main/articles/python/tutorial-containerize-simple-web-app.md
+
+#Forked from the Microsoft https://github.com/Azure-Samples/msdocs-python-flask-webapp-quickstart
+# Forked to https://github.com/callbinuvarghese/msdocs-python-flask-webapp-quickstart
+
+
+➜  pwd
+/Users/binu.b.varghese/source/azure/
+➜  git clone https://github.com/callbinuvarghese/msdocs-python-flask-webapp-quickstart.git
+➜  cd msdocs-python-flask-webapp-quickstart 
+➜  pwd
+/Users/binu.b.varghese/source/azure/msdocs-python-flask-webapp-quickstart
+
+# Az 
+➜   az login
+➜   az extension add --name containerapp --upgrade
+➜   az provider register --namespace Microsoft.App
+➜   az provider register --namespace Microsoft.OperationalInsights
+# for the user managed identity of the container app
+➜   az provider register --namespace Microsoft.ManagedIdentity
+
+# Install dependencies
+➜  pip install -r requirements.txt
+#Run locally
+➜  python app.py
+# Listens to http://127.0.0.1:5000 shows a UI which asks for $name and say hello $name
+
+# Added logging code
+https://github.com/Azure-Samples/azure-monitor-opencensus-python/blob/master/azure_monitor/python_logger_opencensus_azure/README.md
+pip install azure-core-tracing-opencensus --save-dev requirements.pip
+
+
+# Added Dockerfile
+# Now build docker image
+➜  export IMAGE="sample/flask-demo:v1"
+➜  docker build --tag $IMAGE .
+
+# CHeck the image
+➜  docker images
+REPOSITORY                                          TAG       IMAGE ID       CREATED          SIZE
+sample/flask-demo                                   v1        97ad1158cab6   9 minutes ago    1.03GB
+
+# Run it locally
+docker run --detach --publish 5000:50505 $IMAGE
+➜  docker ps
+CONTAINER ID   IMAGE                  COMMAND              CREATED         STATUS         PORTS                                         NAMES
+5dd9f8eae311   sample/flask-demo:v1   "gunicorn app:app"   8 seconds ago   Up 8 seconds   0.0.0.0:8000->50505/tcp, :::8000->50505/tcp   friendly_tesla
+#Mac has an issue with port 5000 for airplay; so change it to 8000
+# Change it to 8000
+docker run --detach --publish 8000:50505 $IMAGE
+# Listens to http://127.0.0.1:8000
+# It asks for a username and say hello using the username using a simple using
+
+# Now that it is locally tested. Deploy it to Azure
+
+export APP="flask-demo"
+export IMAGE="sample/${APP}:v1"
+export ACR_NAME="acrcallbinuvarghese"
+export IMAGE_ACR="${ACR_NAME}.azurecr.io/${IMAGE}"
+export RESOURCE_GROUP="${APP}-containerapps"
+export LOCATION="eastus2"
+export GITHUB_USERNAME="callbinuvarghese"
+export CONTAINER_NAME="${APP}-cont-app"
+export CONTAINER_ENV="${APP}-cont-env"
+export IDENTITY_NAME="${APP}-identity"
+export ACR_SERVICE_PRINCIPAL_NAME="${ACR_NAME}-sp"
+export CONTAINER_PORT=50505
+
+➜   echo $ACR_NAME
+acrcallbinuvarghese
+➜  echo $IMAGE_ACR
+acrcallbinuvarghese.azurecr.io/sample/flask-demo:v1
+
+
+# Now deploy to Azure
+# 1. create resource group 
+➜  az group create --name $RESOURCE_GROUP --location $LOCATION
+{
+  "id": "/subscriptions/xxxx/resourceGroups/flask-demo-containerapps",
+  "location": "eastus2",
+  "managedBy": null,
+  "name": "flask-demo-containerapps",
+  "properties": {
+    "provisioningState": "Succeeded"
+  },
+  "tags": null,
+  "type": "Microsoft.Resources/resourceGroups"
+}
+# Verify the RESOURCE_GROUP
+➜  az group list
+➜  az group show --name $RESOURCE_GROUP
+
+# Now create an ACR repository in the resourceGroup
+➜  az acr create --resource-group $RESOURCE_GROUP --name $ACR_NAME --sku Standard --location $LOCATION
+
+# Direct build to azure docker repository does not work
+#az acr build --image $IMAGE --registry $ACR_NAME  --file Dockerfile .
+(ACR Build fails with (TasksOperationsNotAllowed) ACR Tasks requests for the registry acrcallbinuvarghese and xxxxxx are not permitted. Please file an Azure support request at http://aka.ms/azuresupport for assistance.)
+#So using docker build and push; 
+
+# Login to the Azure ACR repository
+➜  TOKEN=$(az acr login --name $ACR_NAME --expose-token --output tsv --query accessToken)
+➜  docker login "${ACR_NAME}.azurecr.io" --username 00000000-0000-0000-0000-000000000000 --password-stdin <<< $TOKEN
+Login Succeeded
+
+# Instead of using the above command to login to the Azure ACR repository, you can use the following command to login to the Azure ACR repository
+➜ az acr login -n $ACR_NAME
+Login Succeeded
+
+#➜  docker tag $IMAGE "${ACR_NAME}.azurecr.io/${IMAGE}"
+➜  docker images
+REPOSITORY                                          TAG       IMAGE ID       CREATED          SIZE
+acrcallbinuvarghese.azurecr.io/sample/flask-demo    v1        xxxx         9 minutes ago    1.03GB
+sample/flask-demo                                   v1        xxxx         9 minutes ago    1.03GB
+
+#Now push the image to docker repository.
+➜   docker push $IMAGE_ACR
+The push refers to repository [acrcallbinuvarghese.azurecr.io/sample/flask-demo]
+cd1efb8da601: Pushing  8.453MB
+f13530155ef8: Pushing  5.222MB/17.47MB
+3dccfa0a8f8a: Pushed
+ae09294a9eef: Pushed
+dfdf1e02d79e: Pushing  11.89MB
+374341d0cd9a: Pushed
+2b3adb990061: Pushing  9.385MB/50.2MB
+84f540ade319: Pushing  9.116MB/18.64MB
+9fe4e8a1862c: Waiting
+909275a3eaaa: Waiting
+f3f47b3309ca: Waiting
+1a5fc1184c48: Waiting
+
+# Check that the image is pushed to the ACR repository
+➜  az acr repository list --name $ACR_NAME
+[
+  "sample/flask-demo"
+]
+
+# Now deploy the container app
+az containerapp up --name $CONTAINER_NAME --resource-group $RESOURCE_GROUP --location $LOCATION --environment $CONTAINER_ENV --image $IMAGE_ACR --target-port 80 --ingress external --query properties.configuration.ingress.fqdn
+
+➜  az containerapp up --name $CONTAINER_NAME --resource-group $RESOURCE_GROUP --location $LOCATION --environment $CONTAINER_ENV --image $IMAGE_ACR --target-port 80 --ingress external --query properties.configuration.ingress.fqdn
+
+The behavior of this command has been altered by the following extension: containerapp
+Failed to retrieve credentials for container registry. Please provide the registry username and password
+
+# The command to deploy the container failed because the image could not be pulled as there was no access to the registry
+# So create a new service principal for the ACR with image pull role
+
+➜  export SERVICE_PRINCIPAL_NAME="${ACR_NAME}-sp"
+
+# Got a small to create a servicePrincipal in ACR
+➜  cat acr-serviceprincipal.sh
+#!/bin/bash
+# This script requires Azure CLI version 2.25.0 or later. Check version with `az --version`.
+
+# Modify for your environment.
+# ACR_NAME: The name of your Azure Container Registry
+# SERVICE_PRINCIPAL_NAME: Must be unique within your AD tenant
+# exporting the following variables from outside
+#ACR_NAME=$containerRegistry
+#SERVICE_PRINCIPAL_NAME=$servicePrincipal
+
+# Obtain the full registry ID
+ACR_REGISTRY_ID=$(az acr show --name $ACR_NAME --query "id" --output tsv)
+# echo $registryId
+
+# Create the service principal with rights scoped to the registry.
+# Default permissions are for docker pull access. Modify the '--role'
+# argument value as desired:
+# acrpull:     pull only
+# acrpush:     push and pull
+# owner:       push, pull, and assign roles
+PASSWORD=$(az ad sp create-for-rbac --name $ACR_SERVICE_PRINCIPAL_NAME --scopes $ACR_REGISTRY_ID --role acrpull --query "password" --output tsv)
+USER_NAME=$(az ad sp list --display-name $ACR_SERVICE_PRINCIPAL_NAME --query "[].appId" --output tsv)
+
+# Output the service principal's credentials; use these in your services and
+# applications to authenticate to the container registry.
+echo "Service principal ID: $USER_NAME"
+echo "Service principal password: $PASSWORD"%
+
+# Execute the script 
+➜ chmod +x acr-serviceprincipal.sh
+➜   ./acr-serviceprincipal.sh
+WARNING: Creating 'acrpull' role assignment under scope '/subscriptions/xxxxxx/resourceGroups/flask-demo-containerapps/providers/Microsoft.ContainerRegistry/registries/acrcallbinuvarghese'
+WARNING: The output includes credentials that you must protect. Be sure that you do not include these credentials in your code or check the credentials into your source control. For more information, see https://aka.ms/azadsp-cli
+Service principal ID: xxxxx
+Service principal password: xxx
+
+export ACR_SERV_PRINCIPAL_USERNAME="xxxxx"
+export ACR_SERV_PRINCIPAL_PASSWORD="yyyyy"
+
+# The above credentials need to be saved in a kevalue secret store 
+# to show the username and password later use the following command
+➜  az acr credential show -n $ACR_NAME
+
+# Now we have the service principal and password
+# az containerapp up can be call with --registry-username and --registry-password 
+# az containerapp up ..
+
+
+➜ export ACR_SERV_PRINCIPAL_USERNAME="xxxxx"
+➜ export ACR_SERV_PRINCIPAL_PASSWORD="yyyyy"
+➜  az containerapp up --name $CONTAINER_NAME --resource-group $RESOURCE_GROUP --location $LOCATION --environment $CONTAINER_ENV --image $IMAGE_ACR --target-port $CONTAINER_PORT --ingress external --query properties.configuration.ingress.fqdn --registry-username $ACR_SERV_PRINCIPAL_USERNAME --registry-password $ACR_SERV_PRINCIPAL_PASSWORD --environment-variables 'APP_INSIGHTS_KEY'='00000000-2222-2222-2222-000000000000' 
+
+
+The behavior of this command has been altered by the following extension: containerapp
+Using resource group 'flask-demo-containerapps'
+Creating ContainerAppEnvironment 'flask-demo-cont-env' in resource group flask-demo-containerapps
+No Log Analytics workspace provided.
+Generating a Log Analytics workspace with name "workspace-flask-democontainerappsIjyJ"
+Creating Containerapp flask-demo-cont-app in resource group flask-demo-containerapps
+Adding registry password as a secret with name "acrcallbinuvargheseazurecrio-xxxx671c"
+
+Container app created. Access your app at https://flask-demo-cont-app.agreeableflower-2c87719e.eastus2.azurecontainerapps.io/
+
+
+Your container app flask-demo-cont-app has been created and deployed! Congrats!
+
+Browse to your container app at: http://flask-demo-cont-app.agreeableflower-2c87719e.eastus2.azurecontainerapps.io
+
+Stream logs for your container with: az containerapp logs show -n flask-demo-cont-app -g flask-demo-containerapps
+
+See full output using: az containerapp show -n flask-demo-cont-app -g flask-demo-containerapps
+
+# when you open the container ingress URL on browser
+
+https://flask-demo-cont-app.agreeableflower-2c87719e.eastus2.azurecontainerapps.io/
+
+# Got the following error message
+upstream connect error or disconnect/reset before headers. retried and the latest reset reason: remote connection failure, transport failure reason: delayed connect error: 111
+
+# The following page shows the troubleshooting instructions
+https://azureossd.github.io/2023/03/22/Troubleshooting-ingress-issues-on-Azure-Container-Apps/
+# You can shell into the container from Azure , saw the gunicorn processes Running
+
+# Ingress URL opened up UI on browser
+# It was important to match the exposed port to --target-port for the ingress to work properly
+
+# Add a user identity for the container. Default system identity created automatically
+https://learn.microsoft.com/en-us/azure/container-apps/managed-identity?tabs=cli%2Cdotnet
+az containerapp identity show --name $CONTAINER_NAME --resource-group $RESOURCE_GROUP
+➜  az containerapp identity show --name $CONTAINER_NAME --resource-group $RESOURCE_GROUP
+{
+  "type": "None"
+}
+➜  az identity list
+[]
+➜  az identity create --resource-group $RESOURCE_GROUP --name $IDENTITY_NAME --output json
+➜  az identity list --resource-group $RESOURCE_GROUP
+[
+  {
+    "clientId": "xx",
+    "id": "xxxx/flask-demo-containerapps/providers/Microsoft.ManagedIdentity/userAssignedIdentities/flask-demo-identity",
+    "location": "eastus2",
+    "name": "flask-demo-identity",
+    "principalId": "xxxxy",
+    "resourceGroup": "flask-demo-containerapps",
+    "systemData": null,
+    "tags": {},
+    "tenantId": "xxxxz",
+    "type": "Microsoft.ManagedIdentity/userAssignedIdentities"
+  }
+]
+➜  az containerapp identity assign --resource-group $RESOURCE_GROUP --name  $CONTAINER_NAME --user-assigned $IDENTITY_NAME
+➜  az containerapp identity show --name $CONTAINER_NAME --resource-group $RESOURCE_GROUP
+{
+  "type": "UserAssigned",
+  "userAssignedIdentities": {
+    "/subscriptions/xxxx/resourcegroups/flask-demo-containerapps/providers/Microsoft.ManagedIdentity/userAssignedIdentities/flask-demo-identity": {
+      "clientId": "2xxxx",
+      "principalId": "xxxxx"
+    }
+  }
+}
+
+
+# To see the logs of the container
+# Select Container Apps in Azure portal; Click Logs on the left menu. Ignore the popop query. Type ContainerAppConsoleLogs_CL (Autocompletion on type). Click run after selecting the timeframe
+
+
+➜  msdocs-python-flask-webapp-quickstart git:(main) ✗ az group delete --name $RESOURCE_GROUP
+Are you sure you want to perform this operation? (y/n): y
+ - Running ..
+
